@@ -1,0 +1,675 @@
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: media-stack
+
+---
+# ConfigMap for Gluetun environment variables
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gluetun-config
+  namespace: media-stack
+data:
+  VPN_SERVICE_PROVIDER: "nordvpn"
+  VPN_TYPE: "openvpn"
+  SERVER_REGIONS: "New York"
+  TZ: "America/New_York"
+  UPDATER_PERIOD: "24h"
+  FIREWALL_OUTBOUND_SUBNETS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # Allow internal Kubernetes traffic
+  DNS_UPSTREAM_RESOLVERS: "google,opendns"
+  FIREWALL_DEBUG: "on"
+  BLOCK_MALICIOUS: "off"
+
+---
+# Secret for VPN credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vpn-credentials
+  namespace: media-stack
+type: Opaque
+stringData:
+  OPENVPN_USER: "${OPENVPN_USER}"
+  OPENVPN_PASSWORD: "${OPENVPN_PASSWORD}"
+
+---
+# Secret for Plex MCP Server credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: plex-mcp-credentials
+  namespace: media-stack
+type: Opaque
+stringData:
+  PLEX_URL: "${PLEX_URL}"
+  PLEX_TOKEN: "${PLEX_TOKEN}"
+
+---
+# PersistentVolumeClaims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarr-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# PersistentVolumeClaim for Jackett
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jackett-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: radarr-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prowlarr-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qbittorrent-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: overseerr-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plex-config
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plex-transcode
+  namespace: media-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Sonarr Deployment with Gluetun sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sonarr
+  namespace: media-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sonarr
+  template:
+    metadata:
+      labels:
+        app: sonarr
+    spec:
+      containers:
+      - name: sonarr
+        image: lscr.io/linuxserver/sonarr:latest
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/New_York"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: tv
+          mountPath: /tv
+        - name: downloads
+          mountPath: /downloads
+      - name: gluetun
+        image: qmcgaw/gluetun:latest
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+        env:
+        - name: FIREWALL_INPUT_PORTS
+          value: "8989"
+        envFrom:
+        - configMapRef:
+            name: gluetun-config
+        - secretRef:
+            name: vpn-credentials
+        volumeMounts:
+        - name: gluetun-data
+          mountPath: /gluetun
+        - name: tun
+          mountPath: /dev/net/tun
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: sonarr-config
+      - name: tv
+        hostPath:
+          path: /media/hobbylobby/merged/tv
+          type: Directory
+      - name: downloads
+        hostPath:
+          path: /media/hobbylobby/merged/torrents
+          type: Directory
+      - name: gluetun-data
+        emptyDir: {}
+      - name: tun
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice
+      - name: openvpn-config
+        configMap:
+          name: openvpn-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonarr
+  namespace: media-stack
+spec:
+  selector:
+    app: sonarr
+  ports:
+  - port: 8989
+    targetPort: 8989
+
+---
+# Radarr Deployment with Gluetun sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: radarr
+  namespace: media-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: radarr
+  template:
+    metadata:
+      labels:
+        app: radarr
+    spec:
+      containers:
+      - name: radarr
+        image: lscr.io/linuxserver/radarr:latest
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/New_York"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: movies
+          mountPath: /movies
+        - name: downloads
+          mountPath: /downloads
+      - name: gluetun
+        image: qmcgaw/gluetun:latest
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+        env:
+        - name: FIREWALL_INPUT_PORTS
+          value: "7878"
+        envFrom:
+        - configMapRef:
+            name: gluetun-config
+        - secretRef:
+            name: vpn-credentials
+        volumeMounts:
+        - name: gluetun-data
+          mountPath: /gluetun
+        - name: tun
+          mountPath: /dev/net/tun
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: radarr-config
+      - name: movies
+        hostPath:
+          path: /media/hobbylobby/merged/movies
+          type: Directory
+      - name: downloads
+        hostPath:
+          path: /media/hobbylobby/merged/torrents
+          type: Directory
+      - name: gluetun-data
+        emptyDir: {}
+      - name: tun
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: radarr
+  namespace: media-stack
+spec:
+  selector:
+    app: radarr
+  ports:
+  - port: 7878
+    targetPort: 7878
+
+---
+# Jackett Service (now part of indexer-stack deployment)
+apiVersion: v1
+kind: Service
+metadata:
+  name: jackett
+  namespace: media-stack
+spec:
+  selector:
+    app: indexer-stack
+  ports:
+  - port: 9117
+    targetPort: 9117
+
+---
+# Prowlarr, Jackett, and FlareSolverr Deployment with shared Gluetun sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer-stack
+  namespace: media-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: indexer-stack
+  template:
+    metadata:
+      labels:
+        app: indexer-stack
+    spec:
+      containers:
+      - name: prowlarr
+        image: lscr.io/linuxserver/prowlarr:latest
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/New_York"
+        volumeMounts:
+        - name: prowlarr-config
+          mountPath: /config
+      - name: jackett
+        image: lscr.io/linuxserver/jackett:latest
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/New_York"
+        - name: AUTO_UPDATE
+          value: "true"
+        volumeMounts:
+        - name: jackett-config
+          mountPath: /config
+        - name: downloads
+          mountPath: /downloads
+      - name: flaresolverr
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        env:
+        - name: LOG_LEVEL
+          value: "debug"
+        - name: LOG_HTML
+          value: "false"
+        - name: CAPTCHA_SOLVER
+          value: "none"
+        - name: TZ
+          value: "America/New_York"
+      - name: gluetun
+        image: qmcgaw/gluetun:latest
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+        env:
+        - name: FIREWALL_INPUT_PORTS
+          value: "9696,9117,8191"
+        envFrom:
+        - configMapRef:
+            name: gluetun-config
+        - secretRef:
+            name: vpn-credentials
+        volumeMounts:
+        - name: gluetun-data
+          mountPath: /gluetun
+        - name: tun
+          mountPath: /dev/net/tun
+      volumes:
+      - name: prowlarr-config
+        persistentVolumeClaim:
+          claimName: prowlarr-config
+      - name: jackett-config
+        persistentVolumeClaim:
+          claimName: jackett-config
+      - name: downloads
+        hostPath:
+          path: /media/hobbylobby/merged/torrents
+          type: Directory
+      - name: gluetun-data
+        emptyDir: {}
+      - name: tun
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prowlarr
+  namespace: media-stack
+spec:
+  selector:
+    app: indexer-stack
+  ports:
+  - port: 9696
+    targetPort: 9696
+
+---
+# FlareSolverr Service (now part of indexer-stack deployment)
+apiVersion: v1
+kind: Service
+metadata:
+  name: flaresolverr
+  namespace: media-stack
+spec:
+  selector:
+    app: indexer-stack
+  ports:
+  - port: 8191
+    targetPort: 8191
+
+---
+# qBittorrent Deployment with Gluetun sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qbittorrent
+  namespace: media-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qbittorrent
+  template:
+    metadata:
+      labels:
+        app: qbittorrent
+    spec:
+      containers:
+      - name: qbittorrent
+        image: lscr.io/linuxserver/qbittorrent:latest
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/New_York"
+        - name: WEBUI_PORT
+          value: "8080"
+        - name: TORRENTING_PORT
+          value: "6881"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: downloads
+          mountPath: /downloads
+      - name: gluetun
+        image: qmcgaw/gluetun:latest
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+        env:
+        - name: FIREWALL_INPUT_PORTS
+          value: "8080,6881"
+        envFrom:
+        - configMapRef:
+            name: gluetun-config
+        - secretRef:
+            name: vpn-credentials
+        volumeMounts:
+        - name: gluetun-data
+          mountPath: /gluetun
+        - name: tun
+          mountPath: /dev/net/tun
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: qbittorrent-config
+      - name: downloads
+        hostPath:
+          path: /media/hobbylobby/merged/torrents
+          type: Directory
+      - name: gluetun-data
+        emptyDir: {}
+      - name: tun
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qbittorrent
+  namespace: media-stack
+spec:
+  selector:
+    app: qbittorrent
+  ports:
+  - name: webui
+    port: 8080
+    targetPort: 8080
+  - name: torrent-tcp
+    port: 6881
+    targetPort: 6881
+    protocol: TCP
+  - name: torrent-udp
+    port: 6881
+    targetPort: 6881
+    protocol: UDP
+
+---
+# Overseerr Deployment (no VPN)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overseerr
+  namespace: media-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: overseerr
+  template:
+    metadata:
+      labels:
+        app: overseerr
+    spec:
+      containers:
+      - name: overseerr
+        image: sctx/overseerr:latest
+        env:
+        - name: LOG_LEVEL
+          value: "debug"
+        - name: TZ
+          value: "America/New_York"
+        - name: PORT
+          value: "5055"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: overseerr-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: overseerr
+  namespace: media-stack
+spec:
+  selector:
+    app: overseerr
+  ports:
+  - port: 5055
+    targetPort: 5055
+
+---
+# Plex Deployment (no VPN, hostNetwork)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex
+  namespace: media-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: plex
+  template:
+    metadata:
+      labels:
+        app: plex
+    spec:
+      hostNetwork: true
+      containers:
+      - name: plex
+        image: plexinc/pms-docker
+        env:
+        - name: TZ
+          value: "${TZ}"
+        - name: PLEX_CLAIM
+          value: "${PLEX_CLAIM}"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: transcode
+          mountPath: /transcode
+        - name: data
+          mountPath: /data
+      - name: plex-mcp-server
+        image: plex-mcp-server:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: TZ
+          value: "America/New_York"
+        envFrom:
+        - secretRef:
+            name: plex-mcp-credentials
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: plex-config
+      - name: transcode
+        persistentVolumeClaim:
+          claimName: plex-transcode
+      - name: data
+        hostPath:
+          path: /media/hobbylobby/merged
+          type: Directory
+
+---
+# Service for Plex (optional, since it uses hostNetwork)
+apiVersion: v1
+kind: Service
+metadata:
+  name: plex
+  namespace: media-stack
+spec:
+  selector:
+    app: plex
+  ports:
+  - name: plex
+    port: 32400
+    targetPort: 32400
+  - name: mcp-sse
+    port: 3001
+    targetPort: 3001
+

@@ -1,0 +1,9 @@
+[submodule "plex-mcp-server"]
+	path = plex-mcp-server
+	url = https://github.com/vladimir-tutin/plex-mcp-server.git
+[submodule "sonarr-mcp"]
+	path = sonarr-mcp
+	url = https://github.com/MichaelReubenDev/sonarr-mcp.git
+[submodule "radarr-mcp"]
+	path = radarr-mcp
+	url = https://github.com/MichaelReubenDev/radarr-mcp.git
